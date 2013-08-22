@@ -32,4 +32,6 @@ module Pibi
   require 'pibi/version'
   require 'pibi/amqp/consumer'
   require 'pibi/amqp/producer'
+
+  DEBUG = ENV['DEBUG']
 end

@@ -4,13 +4,13 @@ module Pibi
   # @note
   #   The worker class name must reflect the queue it will be consuming.
   class Consumer
-    def initialize
-      @id ||= self.class.to_s.gsub('Consumer', '').downcase
+    def initialize(options = {})
+      @id ||= self.class.to_s.gsub(/([a-z])([A-Z])/, '\1_\2').downcase
 
       @connection = nil
       @channel = nil
 
-      [ 'id', 'exchange', 'queue' ].each do |required|
+      [ 'exchange', 'queue' ].each do |required|
         if !self.instance_variable_get("@#{required}")
           raise 'Consumer is missing required config variable ' + required
         end
@@ -45,8 +45,12 @@ module Pibi
     end
 
     # Start accepting AMQP messages and handling jobs.
-    def start(options, &callback)
-      connect(options) do |connection|
+    def start(config = {}, &callback)
+      if ready?
+        return yield if block_given?
+      end
+
+      connect(config) do |connection|
         log "connected, opening channel..."
         @connection = connection
 
@@ -59,7 +63,9 @@ module Pibi
             @exchange[:object] = e
 
             declare_queue(channel, e) do |queue|
-              yield if block_given?
+              callback.call if block_given?
+
+              on_ready(e, queue)
 
               queue.subscribe do |payload|
                 event = nil
@@ -98,6 +104,7 @@ module Pibi
                 end
 
                 # invoke the general message handler
+                log "  passing on to generic handler"
                 on_message(event)
 
               end # handling payload
@@ -110,6 +117,12 @@ module Pibi
     # Disconnect from AMQP broker.
     def stop(&callback)
       log "disconnecting from broker"
+
+      if !ready?
+        return yield(self) if block_given?
+      end
+
+      on_stop
 
       if !EM.reactor_running?
         log "EM reactor doesnt seem to be running, can't shut down"
@@ -140,6 +153,16 @@ module Pibi
     def on_message(message)
     end
 
+    def set_exchange(name, type)
+      @exchange[:name] = name
+      @exchange[:type] = type
+    end
+
+    def set_queue(name, routing_key = '')
+      @queue[:name] = name
+      @binding[:routing_key] = routing_key
+    end
+
     protected
 
     def log(*msg)
@@ -149,12 +172,20 @@ module Pibi
     protected
 
     def connect(o)
-      connection_options =
-        "amqp://#{o['user']}:#{o['password']}@#{o['host']}:#{o['port']}"
+      o = {
+        'user' => 'guest',
+        'password' => 'guest',
+        'host' => 'localhost',
+        'port' => 5672
+      }.merge(o)
 
-      AMQP.connect(connection_options) do |connection|
-        yield(connection) if block_given?
-      end # AMQP connection
+      connection_options = "amqp://#{o['user']}:#{o['password']}@#{o['host']}:#{o['port']}"
+
+      # EM.next_tick do
+        AMQP.connect(connection_options) do |connection|
+          yield(connection) if block_given?
+        end # AMQP connection
+      # end
     end
 
     def open_channel(connection)
@@ -163,9 +194,11 @@ module Pibi
       end # AMQP channel
     end
 
-    def declare_exchange(channel)
-      channel.send(@exchange[:type], @exchange[:name], @exchange[:options]) do |e, declare_ok|
-        yield(e) if block_given?
+    def declare_exchange(channel, options = {})
+      o = @exchange.merge(options)
+
+      channel.send(o[:type], o[:name], o[:options]) do |e, declare_ok|
+        yield(e, declare_ok) if block_given?
       end # exchange
     end
 
@@ -223,6 +256,12 @@ module Pibi
 
         yield(q) if block_given?
       end # queue
+    end
+
+    def on_ready(exchange, queue)
+    end
+
+    def on_stop
     end
   end
 end

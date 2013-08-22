@@ -21,6 +21,17 @@ RSpec.configure do |config|
   # the seed, which is printed after each run.
   #     --seed 1234
   config.order = 'random'
+  config.before(:each) do
+    AMQP::Channel.queue('specs').purge
+  end
+
+  config.after(:each) do
+    if @consumer
+      if q = @consumer.instance_variable_get('@queue')[:object]
+        q.purge
+      end
+    end
+  end
 
   Thread.abort_on_exception = true
 
