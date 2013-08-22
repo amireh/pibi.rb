@@ -118,6 +118,11 @@ module Pibi
     #
     # @override
     def start(config = @config)
+      if ready?
+        yield if block_given?
+        return true
+      end
+
       connect(config) do |connection|
         @connection = connection
 

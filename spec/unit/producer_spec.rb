@@ -130,4 +130,29 @@ describe Pibi::Producer do
 
   end
 
+  context 'swarming' do
+    it 'should queue a whole heap of 500 jobs' do
+      @consumer.stub(:on_message)
+      @consumer.should_receive(:on_message).exactly(500).times
+
+      t = Thread.new {
+        @consumer.start do
+          5.times do
+            100.times do
+              @producer.queue('specs', 'eat', {
+                client: (rand*100).ceil,
+                datum: 'specs of hell'
+              })
+            end
+
+            sleep(0.1)
+          end
+        end
+      }
+
+      wait_for_amqp!(3)
+      t.join
+    end
+  end
+
 end
