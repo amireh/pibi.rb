@@ -40,6 +40,10 @@ module Pibi
       super()
     end
 
+    def ready?
+      @connection && @channel && @exchange[:object]
+    end
+
     # Start accepting AMQP messages and handling jobs.
     def start(options, &callback)
       connect(options) do |connection|
@@ -119,6 +123,8 @@ module Pibi
 
         yield(self) if block_given?
       end
+
+      @connection = @channel = @exchange[:object] = @queue[:object] = nil
     end
 
     # Handle a message received from the API.
