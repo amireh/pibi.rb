@@ -4,6 +4,8 @@ module Pibi
   # @note
   #   The worker class name must reflect the queue it will be consuming.
   class Consumer
+    include Emitter
+
     def initialize(options = {})
       @id ||= self.class.to_s.gsub(/([a-z])([A-Z])/, '\1_\2').downcase
 
@@ -47,8 +49,14 @@ module Pibi
     # Start accepting AMQP messages and handling jobs.
     def start(config = {}, &callback)
       if ready?
-        return yield if block_given?
+        log "already connected, ignoring request to #start"
+
+        yield if block_given?
+
+        return true
       end
+
+      log "starting..."
 
       connect(config) do |connection|
         log "connected, opening channel..."
@@ -63,51 +71,11 @@ module Pibi
             @exchange[:object] = e
 
             declare_queue(channel, e) do |queue|
-              callback.call if block_given?
+              yield if block_given?
 
-              on_ready(e, queue)
+              emit :ready, e, queue
 
-              queue.subscribe do |payload|
-                event = nil
-
-                begin
-                  event = JSON.parse(payload)
-                rescue JSON::ParserError => e
-                  raise e if DEBUG
-
-                  puts "[error] bad payload from the API! message could not be deserialized:"
-                  puts "[error] raw payload: #{payload}"
-                  puts "[error] parser error: #{e}"
-
-                  stop
-                  next
-                end
-
-                if !event['id'] || !event['client']
-                  log "[error] message is missing a required field: #{event}"
-                  next
-                end
-
-                log "got a message: #{event['id']}"
-
-                # invoke the specific event handler, if any
-                if event['id']
-                  method_id = event['id'].gsub('.', '_')
-
-                  if respond_to?(method_id)
-                    rc = send method_id, event
-
-                    # don't invoke the general message handler if the handler
-                    # returns truthy
-                    next if rc
-                  end
-                end
-
-                # invoke the general message handler
-                log "  passing on to generic handler"
-                on_message(event)
-
-              end # handling payload
+              queue.subscribe &method(:handle_payload)
             end # declaring queue
           end # declaring exchange
         end # opening channel
@@ -119,10 +87,10 @@ module Pibi
       log "disconnecting from broker"
 
       if !ready?
-        return yield(self) if block_given?
-      end
+        yield(self) if block_given?
 
-      on_stop
+        return
+      end
 
       if !EM.reactor_running?
         log "EM reactor doesnt seem to be running, can't shut down"
@@ -133,6 +101,8 @@ module Pibi
 
       @connection && @connection.close do
         log "stopping"
+
+        emit :stopped
 
         yield(self) if block_given?
       end
@@ -148,7 +118,7 @@ module Pibi
     #
     # @param message[:id] [String]
     #   Unique job identifier.
-    # @param message[:client] [Fixnum]
+    # @param message[:client_id] [Fixnum]
     #   The ID of the user for whom this job is being done.
     def on_message(message)
     end
@@ -181,15 +151,23 @@ module Pibi
 
       connection_options = "amqp://#{o['user']}:#{o['password']}@#{o['host']}:#{o['port']}"
 
-      # EM.next_tick do
+      EM.next_tick do
+      # Pibi.start do
         AMQP.connect(connection_options) do |connection|
+          connection.on_error &method(:on_connection_error)
+          connection.on_tcp_connection_loss &method(:on_connection_loss)
+
           yield(connection) if block_given?
         end # AMQP connection
-      # end
+      end
     end
 
     def open_channel(connection)
       AMQP::Channel.new(connection) do |channel|
+        channel.auto_recovery = true
+
+        channel.on_error &method(:on_channel_error)
+
         yield(channel) if block_given?
       end # AMQP channel
     end
@@ -235,8 +213,10 @@ module Pibi
       name = @queue[:name]
 
       options = @queue[:options].clone
+
       binding = {
-        routing_key: @queue[:name]
+        routing_key: @queue[:name],
+        nowait: true
       }.merge(@binding || {})
 
       if exchange.fanout?
@@ -245,23 +225,109 @@ module Pibi
         options[:exclusive] = true
       end
 
-      q = channel.queue(name, options).bind(exchange, binding) do |success|
-        unless success
-          stop do
-            raise RuntimeError, "Unable to declare queue."
-          end
+      log "declaring queue '#{name}' with options: #{options}"
+
+      channel.queue(name, options) do |q, declare_ok|
+        log "binding queue to exchange '#{exchange.name}' with options: #{binding}"
+
+        q.bind(exchange, binding) do
+          log "all good, accepting work"
+
+          yield(q) if block_given?
+        end # binding queue
+      end # declaring queue
+    end
+
+    def reject!(message, cause)
+      log 'message rejected:', message
+
+      raise cause if DEBUG
+
+      message[:rejected] = true
+
+      return false
+    end
+
+    def on_connection_error(connection, ec)
+      puts "[error] AMQP connection-level exception:"
+      puts
+      puts dump_amqp_ec(ec)
+
+      emit :amqp_connection_error, ec
+
+      puts "Shutting down EM reactor, can not recover..."
+
+      EM.stop
+    end
+
+    def on_connection_loss(connection, ec)
+      puts '[error] AMQP TCP connection lost, trying to reconnect...'
+      puts
+      puts dump_amqp_ec(ec)
+
+      emit :amqp_connection_lost, ec
+
+      connection.reconnect(false, 2)
+    end
+
+    def on_channel_error(channel, ec)
+      puts '[error] AMQP Channel error:'
+      puts
+      puts dump_amqp_ec(ec)
+
+      emit :amqp_channel_error, ec.reply_text
+    end
+
+    def handle_payload(payload)
+      event = nil
+
+      begin
+        event = JSON.parse(payload)
+      rescue JSON::ParserError => e
+        raise e if DEBUG
+
+        puts "[error] bad payload from the API! message could not be deserialized:"
+        puts "[error] raw payload: #{payload}"
+        puts "[error] parser error: #{e}"
+
+        return stop
+      end
+
+      event = event.with_indifferent_access
+
+      if !event[:id] || !event[:client_id]
+        return log "[error] message is missing a required field: #{event}"
+      end
+
+      log "got a message: #{event['id']}"
+
+      # invoke the specific event handler, if any
+      if event['id']
+        method_id = event['id'].gsub('.', '_')
+
+        if respond_to?(method_id)
+          rc = send method_id, event
+
+          # don't invoke the general message handler if the handler
+          # returns truthy or has been #reject!-ed
+          return if rc || event[:rejected]
         end
+      end
 
-        log "all good, accepting work"
-
-        yield(q) if block_given?
-      end # queue
+      # invoke the general message handler
+      log "  passing on to generic handler"
+      on_message(event)
     end
 
-    def on_ready(exchange, queue)
-    end
+    private
 
-    def on_stop
+    def dump_amqp_ec(ec)
+      <<-ERR
+      AMQP class id : #{ec.class_id}
+      AMQP method id: #{ec.method_id}
+      Status code   : #{ec.reply_code}
+      Error message : #{ec.reply_text}
+      ERR
     end
   end
 end

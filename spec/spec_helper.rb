@@ -22,7 +22,7 @@ RSpec.configure do |config|
   #     --seed 1234
   config.order = 'random'
   config.before(:each) do
-    AMQP::Channel.queue('specs').purge
+    AMQP::Channel.queue('specs', { passive: true }).purge
   end
 
   config.after(:each) do
@@ -40,20 +40,24 @@ RSpec.configure do |config|
 
     reactor_thread = Thread.new {
       EventMachine.run do
-        puts ">>\tEM reactor up"
+      # Pibi.start do
+        puts ">>\tEM reactor up: #{EM.reactor_running?}"
       end
     }
+
+    reactor_thread.abort_on_exception = true
 
     at_exit do
       puts '>> Shutting down the EM reactor in 5 more seconds'
 
       EventMachine.defer do
         puts ">>\tShutting down."
-        EventMachine.stop_event_loop
+        EventMachine.stop
+        sleep(0.5)
         reactor_thread.exit
       end
 
-      reactor_thread.join(1)
+      reactor_thread.join(2)
     end
 
     sleep(1)

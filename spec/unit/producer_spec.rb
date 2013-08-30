@@ -22,7 +22,7 @@ describe Pibi::Producer do
 
     payload = {
       id: 'sweep_floor',
-      client: 1
+      client_id: 1
     }
 
     @consumer.stub(:on_message)
@@ -39,13 +39,13 @@ describe Pibi::Producer do
     @consumer.stub(:eat)
     @consumer.should_receive(:eat).with amqp_payload({
       id: 'eat',
-      client: 1,
+      client_id: 1,
       food: 'Grilled Bananas'
     })
 
     @consumer.start do
       @producer.queue('specs', 'eat', {
-        client: 1,
+        client_id: 1,
         food: 'Grilled Bananas'
       })
     end
@@ -65,7 +65,7 @@ describe Pibi::Producer do
 
     consumer1.start do
       consumer2.start do
-        @producer.queue('specs', 'eat', { client: 1, food: 'Grilled Bananas' })
+        @producer.queue('specs', 'eat', { client_id: 1, food: 'Grilled Bananas' })
       end
     end
 
@@ -89,13 +89,13 @@ describe Pibi::Producer do
       @consumer.stub(:eat)
       @consumer.should_receive(:eat).with amqp_payload({
         id: 'eat',
-        client: 1,
+        client_id: 1,
         food: 'Grilled Bananas'
       })
 
       @consumer.start do
         @producer.push('specs', 'eat', {
-          client: 1,
+          client_id: 1,
           food: 'Grilled Bananas'
         })
       end
@@ -115,7 +115,7 @@ describe Pibi::Producer do
       consumer2.should_receive(:on_message)
 
       payload = {
-        client: 1,
+        client_id: 1,
         food: 'Grilled Bananas'
       }
 
@@ -140,7 +140,7 @@ describe Pibi::Producer do
           5.times do
             100.times do
               @producer.queue('specs', 'eat', {
-                client: (rand*100).ceil,
+                client_id: (rand*100).ceil,
                 datum: 'specs of hell'
               })
             end

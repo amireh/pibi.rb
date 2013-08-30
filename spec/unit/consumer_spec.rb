@@ -13,8 +13,8 @@ describe Pibi::Consumer do
     @consumer.stub(:on_message)
     @consumer.should_receive(:on_message)
 
-    @consumer.start(amqp_settings) do
-      @producer.queue('specs', 'sweep_floor', { client: 1 })
+    @consumer.start do
+      @producer.queue('specs', 'sweep_floor', { client_id: 1 })
     end
 
     wait_for_amqp!
@@ -28,7 +28,7 @@ describe Pibi::Consumer do
     @consumer.should_receive(:sweep_floor)
 
     @consumer.start(amqp_settings) do
-      @producer.queue('specs', 'sweep_floor', { client: 1 })
+      @producer.queue('specs', 'sweep_floor', { client_id: 1 })
     end
 
     wait_for_amqp!
@@ -42,13 +42,13 @@ describe Pibi::Consumer do
     @consumer.should_not receive(:on_message)
 
     @consumer.start(amqp_settings) do
-      @producer.queue('specs', 'sweep_floor', { client: 1 })
+      @producer.queue('specs', 'sweep_floor', { client_id: 1 })
     end
 
     wait_for_amqp!
   end
 
-  it 'should reject a message missing an :id or a :client' do
+  it 'should reject a message missing an :id or a :client_id' do
     @consumer.stub(:on_message)
     @consumer.should_not receive(:on_message)
 
@@ -67,7 +67,7 @@ describe Pibi::Consumer do
       @consumer.stop do
         sleep(1)
 
-        @producer.queue('specs', 'sweep_floor', { client: 1 }) do
+        @producer.queue('specs', 'sweep_floor', { client_id: 1 }) do
           @consumer.start(amqp_settings)
         end
       end

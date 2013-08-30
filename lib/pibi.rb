@@ -1,4 +1,3 @@
-#
 # Copyright (c) 2013 Ahmad Amireh <ahmad@amireh.net>
 #
 # Permission is hereby granted, free of charge, to any person obtaining a
@@ -26,10 +25,12 @@ require 'amqp'
 require 'json'
 require 'yaml'
 require 'uuid'
+require 'active_support/core_ext/hash/indifferent_access'
 
 module Pibi
   require 'fileutils'
   require 'pibi/version'
+  require 'pibi/emitter'
   require 'pibi/amqp/consumer'
   require 'pibi/amqp/producer'
 
