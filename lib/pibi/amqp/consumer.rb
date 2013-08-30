@@ -62,6 +62,7 @@ module Pibi
       super()
     end
 
+    # Is the consumer ready to handle messages?
     def ready?
       @connection && @channel && @exchange[:object]
     end
@@ -76,21 +77,23 @@ module Pibi
         return true
       end
 
-      log "starting..."
+      log "connecting to broker..."
 
       connect(config) do |connection|
-        log "connected, opening channel..."
+        log "  opening channel..."
         @connection = connection
 
         open_channel(connection) do |channel|
-          log "channel open, declaring exchange #{@exchange[:name]}..."
+          log "    channel open, declaring exchange #{@exchange[:name]}..."
           @channel = channel
 
           declare_exchange(channel) do |e|
-            log "exchange #{@exchange[:name]} declared, declaring queue #{@queue[:name]}..."
+            log "      exchange #{@exchange[:name]} declared, declaring queue #{@queue[:name]}..."
             @exchange[:object] = e
 
             declare_queue(channel, e) do |queue|
+              log "        queue declared and bound, ready to accept messages."
+
               yield if block_given?
 
               emit :ready, e, queue
@@ -119,15 +122,20 @@ module Pibi
         return
       end
 
-      @connection && @connection.close do
-        log "stopping"
+      if @connection
+        @stopping = true
+        @connection.close do
+          log "stopping"
 
-        emit :stopped
+          emit :stopped
 
-        yield(self) if block_given?
+          @stopping = false
+
+          yield(self) if block_given?
+        end
+
+        @connection = @channel = @exchange[:object] = @queue[:object] = nil
       end
-
-      @connection = @channel = @exchange[:object] = @queue[:object] = nil
     end
 
     # Handle a message received from the API.
@@ -159,8 +167,9 @@ module Pibi
       puts ">> [#{@id}]: #{msg.join(' ')}" if ENV['DEBUG']
     end
 
-    protected
-
+    # Connect to the AMQP broker.
+    #
+    # @async
     def connect(o)
       o = {
         'user' => 'guest',
@@ -172,7 +181,6 @@ module Pibi
       connection_options = "amqp://#{o['user']}:#{o['password']}@#{o['host']}:#{o['port']}"
 
       EM.next_tick do
-      # Pibi.start do
         AMQP.connect(connection_options) do |connection|
           connection.on_error &method(:on_connection_error)
           connection.on_tcp_connection_loss &method(:on_connection_loss)
@@ -182,6 +190,9 @@ module Pibi
       end
     end
 
+    # Open a new AMQP channel.
+    #
+    # @async
     def open_channel(connection)
       AMQP::Channel.new(connection) do |channel|
         channel.auto_recovery = true
@@ -191,6 +202,7 @@ module Pibi
       end # AMQP channel
     end
 
+    # Declare an exchange.
     def declare_exchange(channel, options = {})
       o = @exchange.merge(options)
 
@@ -244,19 +256,16 @@ module Pibi
         options[:exclusive] = true
       end
 
-      log "declaring queue '#{name}' with options: #{options}"
-
       channel.queue(name, options) do |q, declare_ok|
-        log "binding queue to exchange '#{exchange.name}' with options: #{binding}"
-
         q.bind(exchange, binding) do
-          log "all good, accepting work"
-
           yield(q) if block_given?
         end # binding queue
       end # declaring queue
     end
 
+    # Reject a message due to a missing field or any other reason.
+    #
+    # Rejected messages will not be passed to any handlers.
     def reject!(message, cause)
       log 'message rejected:', message
 
@@ -267,6 +276,8 @@ module Pibi
       return false
     end
 
+    # Shut down the EventMachine reactor on AMQP connection failures,
+    # effectively aborting the process.
     def on_connection_error(connection, ec)
       puts "[error] AMQP connection-level exception:"
       puts
@@ -279,7 +290,10 @@ module Pibi
       EM.stop
     end
 
+    # Attempt to re-connect to the broker on TCP connection failures.
     def on_connection_loss(connection, ec)
+      return if @stopping
+
       puts '[error] AMQP TCP connection lost, trying to reconnect...'
 
       emit :amqp_connection_lost, ec
@@ -295,6 +309,13 @@ module Pibi
       emit :amqp_channel_error, ec.reply_text
     end
 
+    # Parse the JSON payload and dispatch the message to a handler (if any) or
+    # to the generic one (:on_message).
+    #
+    # All messages must specify the following keys:
+    #
+    #   - :id => String
+    #   - :client_id => Fixnum
     def handle_payload(payload)
       event = nil
 
@@ -312,23 +333,21 @@ module Pibi
 
       event = event.with_indifferent_access
 
-      if !event[:id] || !event[:client_id]
+      if !event['id'] || !event['client_id']
         return log "[error] message is missing a required field: #{event}"
       end
 
       log "got a message: #{event['id']}"
 
       # invoke the specific event handler, if any
-      if event['id']
-        method_id = event['id'].gsub('.', '_')
+      method_id = event['id'].gsub('.', '_')
 
-        if respond_to?(method_id)
-          rc = send method_id, event
+      if respond_to?(method_id)
+        rc = send method_id, event
 
-          # don't invoke the general message handler if the handler
-          # returns truthy or has been #reject!-ed
-          return if rc || event[:rejected]
-        end
+        # don't invoke the general message handler if the handler
+        # returns truthy or has been #reject!-ed
+        return if rc || event[:rejected]
       end
 
       # invoke the general message handler
