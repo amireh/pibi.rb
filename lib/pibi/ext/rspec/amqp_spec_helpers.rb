@@ -25,7 +25,7 @@ module Pibi
         {}
       end
 
-      class SpecConsumer < Pibi::Consumer
+      class SpecConsumer < Pibi::AMQP::Consumer
         def initialize
           @exchange = {
             name: 'pibi.jobs',
@@ -39,18 +39,10 @@ module Pibi
         end
       end
 
-      class SpecProducer < Pibi::Producer
-        def initialize(*args)
-          @exchange = {
-            name: 'pibi.jobs',
-            type: 'direct'
-          }
-
-          super(*args)
-        end
+      class SpecProducer < Pibi::AMQP::Producer
       end
 
-      def wait_for_amqp!(seconds = 2)
+      def wait_for_amqp!(seconds = 0.15)
         sleep(seconds)
       end
 

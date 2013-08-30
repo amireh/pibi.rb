@@ -16,7 +16,7 @@ Gem::Specification.new do |s|
   s.required_ruby_version = '>= 1.9.3'
 
   s.add_dependency 'uuid'
-  s.add_dependency 'amqp', '~> 0.9.0'
+  s.add_dependency 'bunny', '>= 0.10.x'
   s.add_dependency 'json'
   s.add_dependency 'activesupport', '>= 4.0.0'
 

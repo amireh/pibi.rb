@@ -1,4 +1,4 @@
-describe Pibi::Producer do
+describe Pibi::AMQP::Producer do
   before(:each) do
     @consumer = SpecConsumer.new
     @producer = SpecProducer.new(amqp_settings)
@@ -12,10 +12,7 @@ describe Pibi::Producer do
   it 'should publish a message' do
     exchange = {
       name: 'pibi.jobs',
-      type: 'direct',
-      durable: true,
-      passive: false,
-      auto_delete: false
+      type: 'direct'
     }
 
     routing_key = 'specs'
@@ -28,9 +25,8 @@ describe Pibi::Producer do
     @consumer.stub(:on_message)
     @consumer.should_receive(:on_message).with amqp_payload(payload)
 
-    @consumer.start(amqp_settings) do
-      @producer.send(:publish, exchange, routing_key, payload)
-    end
+    @consumer.start(amqp_settings)
+    @producer.send(:publish, exchange, routing_key, payload)
 
     wait_for_amqp!
   end
@@ -63,11 +59,10 @@ describe Pibi::Producer do
     consumer1.should_receive(:on_message)
     consumer2.should_not receive(:on_message)
 
-    consumer1.start do
-      consumer2.start do
-        @producer.queue('specs', 'eat', { client_id: 1, food: 'Grilled Bananas' })
-      end
-    end
+    consumer1.start
+    consumer2.start
+
+    @producer.queue('specs', 'eat', { client_id: 1, food: 'Grilled Bananas' })
 
     wait_for_amqp!
 
@@ -77,7 +72,7 @@ describe Pibi::Producer do
   context 'pushing notifications' do
     def configure(consumer)
       consumer.set_exchange('pibi.push', 'fanout')
-      consumer.set_queue('specs')
+      consumer.set_queue('', 'specs')
       consumer
     end
 
@@ -93,18 +88,16 @@ describe Pibi::Producer do
         food: 'Grilled Bananas'
       })
 
-      @consumer.start do
-        @producer.push('specs', 'eat', {
-          client_id: 1,
-          food: 'Grilled Bananas'
-        })
-      end
+      @consumer.start
+      @producer.push('specs', 'eat', {
+        client_id: 1,
+        food: 'Grilled Bananas'
+      })
 
       wait_for_amqp!
     end
 
     it 'should push a notification to all consumers' do
-
       consumer1 = @consumer
       consumer2 = configure SpecConsumer.new
 
@@ -119,40 +112,14 @@ describe Pibi::Producer do
         food: 'Grilled Bananas'
       }
 
-      consumer1.start do
-        consumer2.start do
-          @producer.push('specs', 'eat a spec', payload)
-        end
-      end
+      consumer1.start
+      consumer2.start
+
+      @producer.push('specs', 'eat a spec', payload)
 
       wait_for_amqp!
     end
 
-  end
-
-  context 'swarming' do
-    it 'should queue a whole heap of 500 jobs' do
-      @consumer.stub(:on_message)
-      @consumer.should_receive(:on_message).exactly(500).times
-
-      t = Thread.new {
-        @consumer.start do
-          5.times do
-            100.times do
-              @producer.queue('specs', 'eat', {
-                client_id: (rand*100).ceil,
-                datum: 'specs of hell'
-              })
-            end
-
-            sleep(0.1)
-          end
-        end
-      }
-
-      wait_for_amqp!(3)
-      t.join
-    end
   end
 
 end

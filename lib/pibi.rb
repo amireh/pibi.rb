@@ -21,7 +21,7 @@
 
 $LOAD_PATH.unshift(File.expand_path(File.dirname(__FILE__)))
 
-require 'amqp'
+require 'bunny'
 require 'json'
 require 'yaml'
 require 'uuid'
@@ -30,7 +30,9 @@ require 'active_support/core_ext/hash/indifferent_access'
 module Pibi
   require 'fileutils'
   require 'pibi/version'
+  require 'pibi/logger'
   require 'pibi/emitter'
+  require 'pibi/amqp/entity'
   require 'pibi/amqp/consumer'
   require 'pibi/amqp/producer'
 

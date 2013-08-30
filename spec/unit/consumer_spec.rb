@@ -1,4 +1,4 @@
-describe Pibi::Consumer do
+describe Pibi::AMQP::Consumer do
   before(:each) do
     @consumer = SpecConsumer.new
     @producer = SpecProducer.new(amqp_settings)
@@ -15,9 +15,8 @@ describe Pibi::Consumer do
 
     @consumer.start do
       @producer.queue('specs', 'sweep_floor', { client_id: 1 })
+      wait_for_amqp!
     end
-
-    wait_for_amqp!
   end
 
   it 'should invoke message handlers' do
@@ -29,23 +28,23 @@ describe Pibi::Consumer do
 
     @consumer.start(amqp_settings) do
       @producer.queue('specs', 'sweep_floor', { client_id: 1 })
-    end
 
-    wait_for_amqp!
+      wait_for_amqp!
+    end
   end
 
   it 'should consume a message' do
     @consumer.stub(:on_message)
     @consumer.stub(:sweep_floor).and_return { true }
 
-    @consumer.should_receive(:sweep_floor)
     @consumer.should_not receive(:on_message)
+    @consumer.should_receive(:sweep_floor)
 
     @consumer.start(amqp_settings) do
       @producer.queue('specs', 'sweep_floor', { client_id: 1 })
-    end
 
-    wait_for_amqp!
+      wait_for_amqp!
+    end
   end
 
   it 'should reject a message missing an :id or a :client_id' do
@@ -55,24 +54,18 @@ describe Pibi::Consumer do
     @consumer.start(amqp_settings) do
       @producer.queue('specs', 'sweep_floor')
     end
-
-    wait_for_amqp!
   end
 
   it 'should consume a pending job' do
     @consumer.stub(:on_message)
-    @consumer.should receive(:on_message)
+    @consumer.should receive(:on_message).with(amqp_payload({
+      id: 'sweep_floor',
+      client_id: 1
+    }))
 
-    @consumer.start(amqp_settings) do
-      @consumer.stop do
-        sleep(1)
-
-        @producer.queue('specs', 'sweep_floor', { client_id: 1 }) do
-          @consumer.start(amqp_settings)
-        end
-      end
-    end
-
-    wait_for_amqp!(1.5)
+    @consumer.start
+    @consumer.stop
+    @producer.queue('specs', 'sweep_floor', { client_id: 1 })
+    @consumer.start(amqp_settings)
   end
 end

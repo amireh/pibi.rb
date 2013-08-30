@@ -18,61 +18,32 @@
 # OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 # SOFTWARE.
 #
-module Pibi
-  class Producer < Consumer
-    emits [ :before_publish, :on_publish  ]
+module Pibi::AMQP
+  class Producer
+    include Pibi::AMQP::Entity
 
-    def initialize(amqp_config)
-      @exchange = {
-        name: 'amq.direct',
-        type: 'direct'
-      }
-      @queue  = {}
-      @config = amqp_config
+    attr_accessor :connection_options
 
-      @publishing_lock = Mutex.new
+    def initialize(options = {}, autostart = true)
+      connection_options = options
 
-      on :ready, &method(:on_ready)
-      on :stopped, &method(:on_stopped)
+      start if autostart
 
       super()
     end
 
-    def ready?
-      @connection && @channel
-    end
+    def start(options = connection_options)
+      log "Connecting to AMQP broker..."
+      connect(options) do
+        log "Connected to AMQP broker. Opening channel..."
 
-    # Establish a connection with the broker, but don't declare any entities
-    # like exchanges or queues.
-    #
-    # @override
-    def start(config = @config)
-      if ready?
-
-        if block_given?
-          EM.next_tick do
-            yield
-          end
-        end
-
-        return true
-      end
-
-      connect(config) do |connection|
-        @connection = connection
-
-        log "connected, opening channel..."
-
-        open_channel(connection) do |channel|
-          @channel = channel
-
-          log "channel open, declaring exchange #{@exchange[:name]}..."
-
-          yield if block_given?
+        open_channel do
+          log "Channel #{@channel.id} open."
         end
       end
     end
 
+    # Queue a job.
     def queue(category, job, data = {}, &block)
       publish({
         name: 'pibi.jobs',
@@ -80,6 +51,7 @@ module Pibi
       }, category, (data || {}).merge({ id: job }), &block)
     end
 
+    # Push a notification.
     def push(category, notification, data = {}, &block)
       publish({
         name: 'pibi.push',
@@ -89,17 +61,7 @@ module Pibi
 
     protected
 
-    def lock(&callback)
-      @broadcast_lock.synchronize do
-        yield self if block_given?
-      end
-    end
-
-    def publish(exchange_definition, routing_key, payload = {}, &block)
-      # if !ready?
-      #   return publish_later(options, &block)
-      # end
-
+    def publish(xdef, routing_key, payload = {}, &block)
       emit :before_publish, payload
 
       # the payload we'll be publishing
@@ -107,62 +69,31 @@ module Pibi
         return false
       end
 
-      exchange_definition = @exchange.merge(exchange_definition)
+      # Grab a handle to the exchange
+      e = declare_exchange(xdef[:name], xdef[:type])
 
-      start do
-        # Grab a handle to the exchange
-        declare_exchange(@channel, exchange_definition) do |e|
-          log "publishing message #{payload} to '#{e.name}.#{routing_key}'"
-
-          # Don't use the routing key if it's a fanout; we need to reach all
-          # consumers.
-          if e.fanout?
-            routing_key = nil
-          end
-
-          # Deliver
-          e.publish(payload, { routing_key: routing_key }) do
-            yield if block_given?
-
-            emit :on_publish
-          end
-        end # declaring the exchange
-      end # connecting to the broker
-    end # publish
-
-    def publish_later(options, &block)
-      lock do
-        @queued << {
-          options: options,
-          callback: block
-        }
-
-        log "message queued until connection to the broker has been established"
-      end
-
-      false
-    end
-
-    # No-op for a producer as we won't be consuming any queue.
-    #
-    # @override
-    def declare_queue(*args)
-      yield(QueueSink) if block_given?
-    end
-
-    def on_ready(e, q)
-      @queued.each { |message|
-        publish message[:options], &message[:callback]
+      delivery = {
+        routing_key: routing_key
       }
 
-      lock do
-        @queued = []
-      end
-    end
+      # Don't use the routing key if it's a fanout; we need to reach all
+      # consumers.
+      delivery.delete(:routing_key) if e.type == :fanout
 
-    def on_stopped
-      @queued = []
-    end
+      log '' <<
+        "publishing message #{payload} to '#{e.name}" <<
+        (delivery.has_key?(:routing_key) ? "##{routing_key}" : "") <<
+        "' (#{e.type})"
+
+      # Deliver
+      e.publish(payload, delivery)
+
+      log "published"
+
+      yield if block_given?
+
+      emit :on_publish
+    end # publish
 
     # Serialize the payload and guard against any malformations
     def serialize_payload(hash)
@@ -186,13 +117,5 @@ module Pibi
         return false
       end
     end
-
-    private
-
-    QueueSink = Object.new
-
-    def QueueSink.subscribe(*args)
-    end
-
   end
 end

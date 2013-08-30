@@ -12,6 +12,8 @@ require 'lib/pibi'
 #
 # See http://rubydoc.info/gems/rspec-core/RSpec/Core/Configuration
 RSpec.configure do |config|
+  Thread.abort_on_exception = true
+
   config.treat_symbols_as_metadata_keys_with_true_values = true
   config.run_all_when_everything_filtered = true
   config.filter_run :focus => true
@@ -22,45 +24,22 @@ RSpec.configure do |config|
   #     --seed 1234
   config.order = 'random'
   config.before(:each) do
-    AMQP::Channel.queue('specs', { passive: true }).purge
-  end
+    conn = Bunny.new
+    conn.start
 
-  config.after(:each) do
-    if @consumer
-      if q = @consumer.instance_variable_get('@queue')[:object]
-        q.purge
-      end
-    end
-  end
-
-  Thread.abort_on_exception = true
-
-  unless EventMachine.reactor_running?
-    puts '>> Launching the EM reactor'
-
-    reactor_thread = Thread.new {
-      EventMachine.run do
-      # Pibi.start do
-        puts ">>\tEM reactor up: #{EM.reactor_running?}"
-      end
-    }
-
-    reactor_thread.abort_on_exception = true
-
-    at_exit do
-      puts '>> Shutting down the EM reactor in 5 more seconds'
-
-      EventMachine.defer do
-        puts ">>\tShutting down."
-        EventMachine.stop
-        sleep(0.5)
-        reactor_thread.exit
-      end
-
-      reactor_thread.join(2)
+    begin
+      conn.create_channel.queue_purge('specs')
+    rescue
     end
 
-    sleep(1)
+    conn.close
+  end
+
+  config.after(:all) do
+    conn = Bunny.new
+    conn.start
+    conn.create_channel.queue_delete('specs')
+    conn.close
   end
 
 end
