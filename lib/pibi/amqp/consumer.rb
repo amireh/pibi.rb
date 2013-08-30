@@ -185,7 +185,6 @@ module Pibi
     def open_channel(connection)
       AMQP::Channel.new(connection) do |channel|
         channel.auto_recovery = true
-
         channel.on_error &method(:on_channel_error)
 
         yield(channel) if block_given?
@@ -282,8 +281,6 @@ module Pibi
 
     def on_connection_loss(connection, ec)
       puts '[error] AMQP TCP connection lost, trying to reconnect...'
-      puts
-      puts dump_amqp_ec(ec)
 
       emit :amqp_connection_lost, ec
 
