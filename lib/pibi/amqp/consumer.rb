@@ -53,11 +53,6 @@ module Pibi::AMQP
       @queue[:options] ||= {}
       @queue[:options].merge! QueueDefaults
 
-      @binding = {
-        routing_key: @queue[:name],
-        nowait: false
-      }.merge(@binding || {})
-
       on :stopped do
         @exchange[:object] = @queue[:object] = nil
       end
@@ -92,7 +87,7 @@ module Pibi::AMQP
             @exchange[:object] = e
             log "      exchange #{@exchange[:name]} declared, declaring queue #{@queue[:name]}..."
 
-            declare_queue(channel, e) do |queue|
+            declare_queue(e) do |queue|
               @queue[:object] = queue
               log "        queue declared and bound, ready to accept messages."
 
@@ -112,9 +107,8 @@ module Pibi::AMQP
       @exchange[:type] = type
     end
 
-    def set_queue(name, routing_key = nil)
+    def set_queue(name)
       @queue[:name] = name
-      @binding[:routing_key] = routing_key if routing_key
     end
 
     protected
@@ -161,21 +155,24 @@ module Pibi::AMQP
     # workers across the cluster.
     #
     # The mapping here is 1-to-1.
-    def declare_queue(channel, exchange)
+    def declare_queue(exchange)
       name = @queue[:name]
       options = @queue[:options].clone
-      binding = {
-        routing_key: name,
-        nowait: true
-      }.merge(@binding || {})
+      binding = {}
+      binding[:routing_key] = name
 
       if exchange.type == :fanout
+        # Use the queue name as the routing key.
+
+        # Let the broker generate a name for the queue.
         name = ''
+
+        # Remove the queue once we're stopped.
         options[:auto_delete] = true
         options[:exclusive] = true
       end
 
-      q = channel.queue(name, options)
+      q = @channel.queue(name, options)
       q.bind(exchange, binding)
 
       log "binding queue #{name} to exchange #{exchange.name} with options:"

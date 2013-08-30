@@ -72,7 +72,7 @@ describe Pibi::AMQP::Producer do
   context 'pushing notifications' do
     def configure(consumer)
       consumer.set_exchange('pibi.push', 'fanout')
-      consumer.set_queue('', 'specs')
+      consumer.set_queue('specs')
       consumer
     end
 

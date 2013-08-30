@@ -13,10 +13,10 @@ describe Pibi::AMQP::Consumer do
     @consumer.stub(:on_message)
     @consumer.should_receive(:on_message)
 
-    @consumer.start do
-      @producer.queue('specs', 'sweep_floor', { client_id: 1 })
-      wait_for_amqp!
-    end
+    @consumer.start
+    @producer.queue('specs', 'sweep_floor', { client_id: 1 })
+
+    wait_for_amqp!
   end
 
   it 'should invoke message handlers' do
