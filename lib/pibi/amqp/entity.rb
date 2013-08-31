@@ -28,12 +28,14 @@ module Pibi::AMQP
         'automatically_recover' => true
       }.merge(o || {})
 
+      o = o.with_indifferent_access
+
       begin
         @connection = Bunny.new(o)
         @connection.start
       # just propagate the errors for now
-      rescue Bunny::PossibleAuthenticationFailureException => e
-        raise e
+      # rescue Bunny::PossibleAuthenticationFailureException => e
+      #   raise e
       rescue Bunny::TCPConnectionFailed => e
         raise e
       end
