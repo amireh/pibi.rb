@@ -27,7 +27,7 @@ module Pibi::AMQP
     def initialize(options = {}, autostart = true)
       connection_options = options
 
-      start if autostart
+      start(options) if autostart
 
       super()
     end
